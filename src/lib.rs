@@ -538,13 +538,10 @@ where
         )?;
         // End Set number of incomplete bit in last byte
 
-        match without_crc {
-            true => {
-                self.direct_command(DirectCommand::TransmitWithoutCRC)?;
-            }
-            false => {
-                self.direct_command(DirectCommand::TransmitWithCRC)?;
-            }
+        if without_crc {
+            self.direct_command(DirectCommand::TransmitWithoutCRC)?;
+        } else {
+            self.direct_command(DirectCommand::TransmitWithCRC)?;
         }
         let intr_res = self.wait_for_interrupt(interrupt_flags, 2);
         self.disable_interrupts(interrupt_flags)?;
@@ -572,8 +569,11 @@ where
         self.fifo_data()
     }
 
-    pub fn select(&mut self) -> Result<Uid, Error<SPI::Error, IRQ::Error>> {
-        debug!("Select");
+    /// Select a PICC.
+    ///
+    /// Pass the `Uid` of a PICC to select that specific tag.
+    /// If no `Uid` is given, the anticollision procedure is used to resolve the IDs of the tags.
+    pub fn select(&mut self, uid: Option<&Uid>) -> Result<Uid, Error<SPI::Error, IRQ::Error>> {
         let mut cascade_level: u8 = 0;
         let mut uid_bytes: [u8; 10] = [0u8; 10];
         let mut uid_idx: usize = 0;
