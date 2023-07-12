@@ -1,4 +1,7 @@
 //! ST25R3911B register definitions
+#[cfg(feature = "defmt")]
+use defmt::bitflags;
+#[cfg(not(feature = "defmt"))]
 use bitflags::bitflags;
 
 #[allow(dead_code)]
@@ -140,7 +143,6 @@ impl From<Register> for u8 {
 }
 
 bitflags! {
-    #[derive(Debug, Clone, Copy)]
     pub struct InterruptFlags: u32 {
         const MASK_ALL = 0xFFFFFF; // Disable all interrupts
 

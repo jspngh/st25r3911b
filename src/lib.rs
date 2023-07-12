@@ -2,7 +2,6 @@
 
 use embedded_hal as hal;
 
-use defmt::debug;
 use hal::delay;
 use hal::digital::InputPin;
 use hal::spi;
@@ -13,9 +12,15 @@ use register::{Bitrate, InterruptFlags, OperationMode, Register};
 mod command;
 mod picc;
 mod register;
+mod utils;
 
 pub mod error;
 use error::Error;
+
+#[cfg(feature = "logging")]
+use defmt::{trace, debug, info};
+#[cfg(not(feature = "logging"))]
+use utils::{trace, debug, info};
 
 /// Answer To reQuest A
 pub struct AtqA {
@@ -119,8 +124,8 @@ where
         debug!("New ST25R3911B driver instance");
         st25r3911b.initialize_chip()?;
 
-        let silicon_rev = st25r3911b.check_chip_id()?;
-        defmt::info!("With silicon revision {=u8:x}", silicon_rev);
+        let _silicon_rev = st25r3911b.check_chip_id()?;
+        debug!("With silicon revision {=u8:x}", _silicon_rev);
 
         // Set FIFO Water Levels to be used
         st25r3911b.modify_register(Register::IOConfiguration1, 0, 0b0011_0000)?;
@@ -276,7 +281,7 @@ where
         self.disable_interrupts(intr_flags)?;
 
         let intr = intr_res?;
-        debug!("intr: {:?}", defmt::Debug2Format(&intr));
+        debug!("intr: {:?}", intr);
         if intr.contains(InterruptFlags::MINIMUM_GUARD_TIME_EXPIRE) {
             // Also enable Receiver
             self.modify_register(Register::OperationControlRegister, 0, 1 << 6 | 1 << 3)?;
@@ -394,7 +399,7 @@ where
         self.disable_interrupts(interrupt_flags)?;
         let intr = intr_res?;
 
-        debug!("intr: {:?}", defmt::Debug2Format(&intr));
+        debug!("intr: {:?}", intr);
 
         // Start of TransceiveRx
 
@@ -552,7 +557,7 @@ where
         self.disable_interrupts(interrupt_flags)?;
         let intr = intr_res?;
 
-        debug!("intr: {:?}", defmt::Debug2Format(&intr));
+        debug!("intr: {:?}", intr);
 
         if intr.contains(InterruptFlags::BIT_COLLISION) {
             return Err(Error::Collision);
@@ -609,7 +614,7 @@ where
 
                 debug!(
                     "known_bits: {}, end: {}, tx_bytes: {}, tx_last_bits: {}",
-                    known_bits, end, tx_bytes, tx_last_bits,
+                    known_bits, end, tx_bytes, tx_last_bits
                 );
 
                 // Tell transmit the only send `tx_last_bits` of the last byte
