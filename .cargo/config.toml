@@ -1,2 +1,2 @@
 [env]
-DEFMT_LOG = "debug"
+DEFMT_LOG = "info"
