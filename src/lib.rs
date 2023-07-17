@@ -809,6 +809,16 @@ where
         Ok(())
     }
 
+    /// Execute a *direct command*
+    pub fn direct_command(
+        &mut self,
+        command: DirectCommand,
+    ) -> Result<(), Error<SPI::Error, IRQ::Error>> {
+        debug!("Executing command: {:?}", command);
+        self.spi.write(&[command.pattern()]).map_err(Error::Spi)
+    }
+
+    /// Perform read-modify-write operations on a register
     fn modify_register(
         &mut self,
         reg: Register,
@@ -822,15 +832,7 @@ where
         Ok(())
     }
 
-    /// Execute a *direct command*
-    pub fn direct_command(
-        &mut self,
-        command: DirectCommand,
-    ) -> Result<(), Error<SPI::Error, IRQ::Error>> {
-        debug!("Executing command: {:?}", command);
-        self.spi.write(&[command.pattern()]).map_err(Error::Spi)
-    }
-
+    /// Write the value of a register
     pub fn write_register(
         &mut self,
         reg: Register,
@@ -842,6 +844,7 @@ where
             .map_err(Error::Spi)
     }
 
+    /// Read the value of a register
     pub fn read_register(&mut self, reg: Register) -> Result<u8, Error<SPI::Error, IRQ::Error>> {
         let address = [RegisterOperation::Read(reg).pattern()];
         let mut value = [0];
