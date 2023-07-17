@@ -569,6 +569,85 @@ where
         self.fifo_data()
     }
 
+    fn anticollision(&mut self, cmd: u8) -> Result<[u8; 7], Error<SPI::Error, IRQ::Error>> {
+        let mut known_bits = 0;
+        let mut tx = [0u8; 7];
+        tx[0] = cmd;
+        let mut anticollision_cycle_counter = 0;
+
+        'anticollision: loop {
+            anticollision_cycle_counter += 1;
+            if anticollision_cycle_counter > 32 {
+                return Err(Error::AntiCollisionMaxLoopsReached);
+            }
+
+            let tx_last_bits = known_bits % 8;
+            let tx_bytes = 2 + known_bits / 8;
+            let end = tx_bytes as usize + if tx_last_bits > 0 { 1 } else { 0 };
+            tx[1] = (tx_bytes << 4) + tx_last_bits;
+
+            debug!(
+                "known_bits: {}, end: {}, tx_bytes: {}, tx_last_bits: {}",
+                known_bits, end, tx_bytes, tx_last_bits,
+            );
+
+            // Tell transmit the only send `tx_last_bits` of the last byte
+            // and also to put the first received bit at location `tx_last_bits`.
+            // This makes it easier to append the received bits to the uid (in `tx`).
+            match self.anticollision_transmit::<5>(
+                &tx[0..end],
+                tx_bytes as usize,
+                tx_last_bits,
+                true,
+            ) {
+                Ok(fifo_data) => {
+                    fifo_data.copy_bits_to(&mut tx[2..=6], known_bits);
+                    debug!("Read full response {:?}", fifo_data);
+                    break 'anticollision;
+                }
+                Err(Error::Collision) => {
+                    let coll_reg = self.read_register(Register::CollisionDisplayRegister)?;
+                    debug!("coll_reg: 0b{:08b}", coll_reg);
+
+                    let bytes_before_coll = ((coll_reg >> 4) & 0b1111) - 2;
+                    let bits_before_coll = (coll_reg >> 1) & 0b111;
+                    debug!(
+                        "bytes_before_coll: {}, bits_before_coll: {}",
+                        bytes_before_coll, bits_before_coll
+                    );
+
+                    let coll_pos = bytes_before_coll * 8 + bits_before_coll + 1;
+
+                    if coll_pos < known_bits || coll_pos > 8 * 9 {
+                        // No progress
+                        return Err(Error::Collision);
+                    }
+
+                    let fifo_data = self.fifo_data::<5>()?;
+                    debug!("Read partial response {:?}", fifo_data);
+
+                    fifo_data.copy_bits_to(&mut tx[2..=6], known_bits);
+                    known_bits = coll_pos;
+
+                    // Set the bit of collision position to 1
+                    let count = known_bits % 8;
+                    let check_bit = (known_bits - 1) % 8;
+                    let index: usize =
+                        1 + (known_bits / 8) as usize + if count != 0 { 1 } else { 0 };
+                    // TODO safe check that index is in range
+                    tx[index] |= 1 << check_bit;
+                }
+                Err(Error::Timeout) => {
+                    debug!("Timeout anticollision");
+                    return Err(Error::Timeout);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(tx)
+    }
+
     /// Select a PICC.
     ///
     /// Pass the `Uid` of a PICC to select that specific tag.
@@ -583,86 +662,21 @@ where
                 1 => picc::Command::SelCl2,
                 2 => picc::Command::SelCl3,
                 _ => unreachable!(),
+            } as u8;
+
+            let mut tx = match uid {
+                Some(uid) => {
+                    let mut tx = [0u8; 7];
+                    tx[0] = cmd;
+                    match uid {
+                        Uid::Single(u) => tx[2..6].copy_from_slice(&u.bytes),
+                        Uid::Double(_u) => todo!(),
+                        Uid::Triple(_u) => todo!(),
+                    }
+                    tx
+                }
+                None => self.anticollision(cmd)?,
             };
-            let mut known_bits = 0;
-            let mut tx = [0u8; 9];
-            tx[0] = cmd as u8;
-            let mut anticollision_cycle_counter = 0;
-
-            debug!("Select with cascade {}", cascade_level);
-            'anticollision: loop {
-                anticollision_cycle_counter += 1;
-                debug!(
-                    "Stating anticollision loop nr {} read uid_bytes {=[?]:x}",
-                    anticollision_cycle_counter, uid_bytes
-                );
-
-                if anticollision_cycle_counter > 32 {
-                    return Err(Error::AntiCollisionMaxLoopsReached);
-                }
-                let tx_last_bits = known_bits % 8;
-                let tx_bytes = 2 + known_bits / 8;
-                let end = tx_bytes as usize + if tx_last_bits > 0 { 1 } else { 0 };
-                tx[1] = (tx_bytes << 4) + tx_last_bits;
-
-                debug!(
-                    "known_bits: {}, end: {}, tx_bytes: {}, tx_last_bits: {}",
-                    known_bits, end, tx_bytes, tx_last_bits,
-                );
-
-                // Tell transmit the only send `tx_last_bits` of the last byte
-                // and also to put the first received bit at location `tx_last_bits`.
-                // This makes it easier to append the received bits to the uid (in `tx`).
-                match self.anticollision_transmit::<5>(
-                    &tx[0..end],
-                    tx_bytes as usize,
-                    tx_last_bits,
-                    true,
-                ) {
-                    Ok(fifo_data) => {
-                        fifo_data.copy_bits_to(&mut tx[2..=6], known_bits);
-                        debug!("Read full response {:?}", fifo_data);
-                        break 'anticollision;
-                    }
-                    Err(Error::Collision) => {
-                        let coll_reg = self.read_register(Register::CollisionDisplayRegister)?;
-                        debug!("coll_reg: 0b{:08b}", coll_reg);
-
-                        let bytes_before_coll = ((coll_reg >> 4) & 0b1111) - 2;
-                        let bits_before_coll = (coll_reg >> 1) & 0b111;
-                        debug!(
-                            "bytes_before_coll: {}, bits_before_coll: {}",
-                            bytes_before_coll, bits_before_coll
-                        );
-
-                        let coll_pos = bytes_before_coll * 8 + bits_before_coll + 1;
-
-                        if coll_pos < known_bits || coll_pos > 8 * 9 {
-                            // No progress
-                            return Err(Error::Collision);
-                        }
-
-                        let fifo_data = self.fifo_data::<5>()?;
-                        debug!("Read partial response {:?}", fifo_data);
-
-                        fifo_data.copy_bits_to(&mut tx[2..=6], known_bits);
-                        known_bits = coll_pos;
-
-                        // Set the bit of collision position to 1
-                        let count = known_bits % 8;
-                        let check_bit = (known_bits - 1) % 8;
-                        let index: usize =
-                            1 + (known_bits / 8) as usize + if count != 0 { 1 } else { 0 };
-                        // TODO safe check that index is in range
-                        tx[index] |= 1 << check_bit;
-                    }
-                    Err(Error::Timeout) => {
-                        debug!("Timeout anticollision");
-                        return Err(Error::Timeout);
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
 
             // send select
             tx[1] = 0x70; // NVB: 7 valid bytes
