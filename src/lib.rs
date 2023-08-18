@@ -670,7 +670,14 @@ where
                     tx[0] = cmd;
                     match uid {
                         Uid::Single(u) => tx[2..6].copy_from_slice(&u.bytes),
-                        Uid::Double(_u) => todo!(),
+                        Uid::Double(u) => match cascade_level {
+                            0 => {
+                                tx[2] = 0x88; // 'cascade tag'
+                                tx[3..6].copy_from_slice(&u.bytes[0..3])
+                            },
+                            1 => tx[2..6].copy_from_slice(&u.bytes[3..7]),
+                            _ => panic!("cascade level 3 for 7-byte UID"),
+                        },
                         Uid::Triple(_u) => todo!(),
                     }
                     tx
